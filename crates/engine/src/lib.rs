@@ -25,6 +25,7 @@ pub mod occurrences;
 pub mod origins;
 pub mod panels;
 pub mod params;
+pub mod plugins;
 pub mod product_scene;
 pub mod recovery;
 pub mod render_jobs;
@@ -55,6 +56,7 @@ pub use cmd::{
     Addition, CommandInfo, CommandSpec, LinkProblem, LinkState, OpenSteps, addition, auto_operation, command_specs, dimension_roles, extrude_reach,
     find_command, resolve_design_links, shown_scope, standard_view,
 };
+pub use plugins::{PluginEntrySummary, PluginExecutor, PluginPanelInfo, PluginRegistry, PluginRibbonGroup, PluginRibbonItem, PluginRibbonTab, PluginSummary};
 pub use solidcraft_doc as doc;
 pub use solidcraft_doc::Visibility;
 pub use solidcraft_geom as geom;
@@ -657,6 +659,7 @@ pub struct Session {
     pub(crate) evaluations: usize,
     /// Resolved associative trace inputs, independent of the document revision and view state.
     pub(crate) motion_traces: cmd::motion::associative::Cache,
+    pub(crate) plugins: PluginRegistry,
 }
 
 /// A sketch changed by one frame of an interactive gesture (`live: true`).
@@ -900,6 +903,7 @@ impl Session {
             render_jobs: Default::default(),
             evaluations: 0,
             motion_traces: Default::default(),
+            plugins: PluginRegistry::new(),
             command_check: None,
             crash_journal: false,
         }
@@ -1686,6 +1690,7 @@ impl Session {
     /// gesture's end (`sketch.drag_end`, or whatever runs next after an abandoned gesture) brings
     /// the model up to date before anything reads it.
     pub fn execute(&mut self, id: &str, params: &Value) -> Result<Value> {
+        if let Some(result) = self.try_execute_plugin_command(id, params) { return result; }
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.to_string()))?;
         if panels::commands::is_command(spec.id) {
             // Layout is application state. Even a missing capability must not
@@ -2056,6 +2061,7 @@ impl Session {
             saved_visibility: self.saved_visibility.clone(),
             evaluations: 0,
             motion_traces: self.motion_traces.clone(),
+            plugins: self.plugins.clone(),
             command_check: self.command_check.clone(),
             crash_journal: false,
         }

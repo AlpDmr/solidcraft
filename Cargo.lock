@@ -1000,6 +1000,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "craft-plugin"
+version = "0.40.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "crc32fast"
 version = "1.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4453,6 +4462,7 @@ dependencies = [
 name = "solidcraft-engine"
 version = "0.40.1"
 dependencies = [
+ "craft-plugin",
  "image",
  "log",
  "schemars",
