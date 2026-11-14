@@ -4700,6 +4700,7 @@ name = "solidcraft-ui-egui"
 version = "0.40.1"
 dependencies = [
  "arboard",
+ "craft-plugin",
  "egui",
  "egui-wgpu",
  "image",

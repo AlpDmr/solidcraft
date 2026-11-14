@@ -8,7 +8,6 @@
 use std::path::{Path, PathBuf};
 
 use egui::RichText;
-use serde::Deserialize;
 
 use crate::SolveApp;
 use crate::ui_kit::BackingTooltipExt as _;
@@ -34,16 +33,6 @@ pub struct Skipped {
     pub reason: String,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Manifest {
-    id: String,
-    name: String,
-    version: String,
-    #[serde(default)]
-    description: String,
-}
-
 /// The plugins directory: `$XDG_DATA_HOME/solidcraft/plugins` (and the platform equivalents of
 /// [`solidcraft_engine::recovery::data_dir`]). `None` when that folder cannot be named.
 pub fn plugins_dir() -> Option<PathBuf> {
@@ -60,32 +49,6 @@ pub fn valid_id(id: &str) -> bool {
         && *b.last().unwrap_or(&b'-') != b'-'
 }
 
-fn plain(text: &str, max: usize) -> bool {
-    !text.is_empty() && text.chars().count() <= max && text.chars().all(|c| !c.is_control())
-}
-
-fn check(m: Manifest, folder: &str) -> Result<Plugin, String> {
-    if m.id != folder {
-        return Err(format!("plugin.json id `{}` does not match the folder `{folder}`", m.id));
-    }
-    if !valid_id(&m.id) {
-        return Err("the id must be 1–64 lowercase letters, digits and hyphens".into());
-    }
-    let name = m.name.trim();
-    if !plain(name, 80) {
-        return Err("the name must be 1–80 characters with no line breaks".into());
-    }
-    let version = m.version.trim();
-    if !plain(version, 32) || !version.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+')) {
-        return Err("the version must be 1–32 letters, digits, dots, hyphens or plus signs".into());
-    }
-    let description = m.description.trim();
-    if description.chars().count() > 240 || description.chars().any(|c| c.is_control()) {
-        return Err("the description must be at most 240 characters with no line breaks".into());
-    }
-    Ok(Plugin { id: m.id, name: name.to_string(), version: version.to_string(), description: description.to_string() })
-}
-
 fn read_plugin(dir: &Path, folder: &str) -> Result<Plugin, String> {
     let path = dir.join("plugin.json");
     let meta = std::fs::metadata(&path).map_err(|_| "no plugin.json".to_string())?;
@@ -93,8 +56,14 @@ fn read_plugin(dir: &Path, folder: &str) -> Result<Plugin, String> {
         return Err("plugin.json is missing or larger than 16 KiB".into());
     }
     let text = std::fs::read_to_string(&path).map_err(|e| format!("plugin.json could not be read ({e})"))?;
-    let manifest: Manifest = serde_json::from_str(&text).map_err(|e| format!("plugin.json is not a plugin manifest ({e})"))?;
-    check(manifest, folder)
+    let m = craft_plugin::parse_manifest(text.as_bytes(), folder)
+        .map_err(|e| format!("plugin.json is not a plugin manifest ({e})"))?;
+    Ok(Plugin {
+        id: m.id,
+        name: m.name,
+        version: m.version,
+        description: m.description,
+    })
 }
 
 /// The plugins in `dir`, and the folders that were not. A missing directory is an empty list.
