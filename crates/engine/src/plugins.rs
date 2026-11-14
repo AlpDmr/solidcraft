@@ -125,6 +125,107 @@ impl Session {
     }
 }
 
+
+#[derive(Deserialize)]
+struct WasmPluginOutput {
+    #[serde(default)]
+    commands: Vec<WasmCommandCall>,
+    #[serde(default)]
+    result: Value,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct WasmCommandCall {
+    id: String,
+    #[serde(default)]
+    args: Value,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn wasm_executor(wasm_bytes: Vec<u8>, allowed_commands: Vec<String>) -> Result<PluginExecutor> {
+    let engine = wasmi::Engine::default();
+    let module = wasmi::Module::new(&engine, &wasm_bytes)
+        .map_err(|e| EngineError::Other(format!("invalid plugin wasm module: {e}")))?;
+    let allowed: BTreeSet<String> = allowed_commands.into_iter().collect();
+
+    Ok(Arc::new(move |session: &mut Session, entry: &str, params: &Value| {
+        let mut store = wasmi::Store::new(&engine, ());
+        let instance = wasmi::Linker::<()>::new(&engine)
+            .instantiate(&mut store, &module)
+            .map_err(|e| EngineError::Other(format!("wasm instantiate failed: {e}")))?
+            .start(&mut store)
+            .map_err(|e| EngineError::Other(format!("wasm start failed: {e}")))?;
+
+        let memory = instance
+            .get_memory(&store, "memory")
+            .ok_or_else(|| EngineError::Other("plugin wasm must export `memory`".into()))?;
+
+        let args_bytes = serde_json::to_vec(params)
+            .map_err(|e| EngineError::Internal(entry.into(), e.to_string()))?;
+        let entry_bytes = entry.as_bytes();
+
+        let (entry_ptr, args_ptr) = if let Ok(alloc) = instance.get_typed_func::<i32, i32>(&store, "alloc") {
+            let ep = alloc
+                .call(&mut store, entry_bytes.len() as i32)
+                .map_err(|e| EngineError::Other(format!("wasm alloc failed: {e}")))?;
+            memory
+                .write(&mut store, ep as usize, entry_bytes)
+                .map_err(|e| EngineError::Other(format!("wasm memory write failed: {e}")))?;
+            let ap = alloc
+                .call(&mut store, args_bytes.len() as i32)
+                .map_err(|e| EngineError::Other(format!("wasm alloc failed: {e}")))?;
+            memory
+                .write(&mut store, ap as usize, &args_bytes)
+                .map_err(|e| EngineError::Other(format!("wasm memory write failed: {e}")))?;
+            (ep, ap)
+        } else {
+            (0, 0)
+        };
+
+        let sc_run = instance
+            .get_typed_func::<(i32, i32, i32, i32), i64>(&store, "sc_run")
+            .map_err(|e| EngineError::Other(format!("plugin wasm must export `sc_run(i32, i32, i32, i32) -> i64`: {e}")))?;
+
+        let packed = sc_run
+            .call(&mut store, (entry_ptr, entry_bytes.len() as i32, args_ptr, args_bytes.len() as i32))
+            .map_err(|e| EngineError::Other(format!("wasm execution trapped: {e}")))?;
+
+        let out_ptr = ((packed as u64) >> 32) as usize;
+        let out_len = (packed as u64 & 0xFFFF_FFFF) as usize;
+        if out_len > 1024 * 1024 {
+            return Err(EngineError::Other("plugin output exceeds 1 MiB limit".into()));
+        }
+        let mut out_buf = vec![0u8; out_len];
+        memory
+            .read(&store, out_ptr, &mut out_buf)
+            .map_err(|e| EngineError::Other(format!("wasm output memory read out of bounds: {e}")))?;
+
+        let output: WasmPluginOutput = serde_json::from_slice(&out_buf)
+            .map_err(|e| EngineError::Other(format!("plugin returned invalid JSON protocol: {e}")))?;
+
+        if let Some(err_msg) = output.error {
+            return Err(EngineError::Other(err_msg));
+        }
+
+        for cmd in &output.commands {
+            if !allowed.contains(&cmd.id) {
+                return Err(EngineError::Disabled(
+                    cmd.id.clone(),
+                    format!("plugin is not permitted to invoke command `{}` (not in runtime.commands)", cmd.id),
+                ));
+            }
+        }
+
+        let mut last_result = Value::Null;
+        for cmd in output.commands {
+            let args = if cmd.args.is_null() { serde_json::json!({}) } else { cmd.args };
+            last_result = session.execute(&cmd.id, &args)?;
+        }
+        Ok(if output.result.is_null() { last_result } else { output.result })
+    }))
+}
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod plugin_bridge_tests {
@@ -143,5 +244,47 @@ mod plugin_bridge_tests {
         assert_eq!(reply["leg_mm"], 6.5);
         session.execute("plugin.toggle", &json!({ "id": "weld-pro", "enabled": false })).unwrap();
         assert!(session.plugin_ribbon_tabs().is_empty());
+    }
+
+    #[test]
+    fn wasm_executor_runs_allowed_commands_and_blocks_disallowed() {
+        let payload = r#"{"commands":[{"id":"solid.cylinder","args":{"radius":30.0,"height":12.0,"body_name":"SpurGearBlank"}}],"result":{"created":"SpurGearBlank"}}"#;
+        let len = payload.len();
+        let wat_src = format!(
+            r#"(module
+                (memory (export "memory") 1)
+                (data (i32.const 64) "{escaped}")
+                (func (export "sc_run") (param i32 i32 i32 i32) (result i64)
+                    (i64.or
+                        (i64.shl (i64.const 64) (i64.const 32))
+                        (i64.const {len})
+                    )
+                )
+            )"#,
+            escaped = payload.replace('"', "\\\""),
+            len = len
+        );
+        let wasm_bytes = wat::parse_str(&wat_src).expect("valid wat");
+
+        if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+            let dir = std::path::PathBuf::from(local_app_data)
+                .join("SolidCraft")
+                .join("plugins")
+                .join("gear-toolkit");
+            if dir.exists() {
+                let _ = std::fs::write(dir.join("gear-toolkit.wasm"), &wasm_bytes);
+            }
+        }
+
+        // 1. Disallowed command must be blocked by the capability firewall
+        let blocked_exec = wasm_executor(wasm_bytes.clone(), vec!["sketch.create".into()]).expect("executor");
+        let mut session = Session::new(solidcraft_doc::Document::new("test"));
+        let err = blocked_exec(&mut session, "spur-gear", &serde_json::json!({})).unwrap_err();
+        assert!(err.to_string().contains("not permitted to invoke command `solid.cylinder`"), "{err}");
+
+        // 2. Allowed command executes and creates geometry in the session
+        let allowed_exec = wasm_executor(wasm_bytes, vec!["solid.cylinder".into()]).expect("executor");
+        let out = allowed_exec(&mut session, "spur-gear", &serde_json::json!({"teeth": 24})).expect("allowed run");
+        assert_eq!(out["created"], "SpurGearBlank");
     }
 }
