@@ -192,7 +192,7 @@ pub fn sync_installed_plugins(app: &mut SolveApp) {
                         .and_then(|m| m.runtime)
                         .and_then(|rt| {
                             let wasm_bytes = std::fs::read(path.join(&rt.module)).ok()?;
-                            solidcraft_engine::plugins::wasm_executor(wasm_bytes, rt.commands).ok()
+                            solidcraft_engine::plugins::wasm_executor(wasm_bytes, rt.commands.into_iter().collect()).ok()
                         });
                     let _ = app.session.register_plugin_json(&bytes, folder, executor);
                 }
