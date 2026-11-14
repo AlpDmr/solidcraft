@@ -1,4 +1,4 @@
-//! Declarative Ribbon tabs, groups, and panel definitions for third-party plugins.
+//! Declarative Ribbon tabs, built-in tab placements, groups, and panel definitions for third-party plugins.
 //! Strictly app-agnostic: contains no egui or SolidCraft dependencies.
 
 use std::collections::BTreeSet;
@@ -12,12 +12,34 @@ pub const MAX_RIBBON_TABS_PER_PLUGIN: usize = 4;
 pub const MAX_GROUPS_PER_TAB: usize = 8;
 pub const MAX_BUTTONS_PER_GROUP: usize = 16;
 pub const MAX_PANELS_PER_PLUGIN: usize = 8;
+pub const MAX_PLACEMENTS_PER_PLUGIN: usize = 16;
 
+/// Top-level UI declaration inside `plugin.json`.
+/// Plugins may declare standalone `ribbon_tabs`, inject buttons/groups into built-in tabs via
+/// `placements`, and/or register dockable `panels` simultaneously.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct UiManifest {
     pub ribbon_tabs: Vec<RibbonTabManifest>,
+    pub placements: Vec<UiPlacementManifest>,
     pub panels: Vec<PluginPanelManifest>,
+}
+
+/// Targets a built-in SolidCraft Ribbon tab (e.g., `MODEL`, `SKETCH`, `SURFACE`, `ASSEMBLE`)
+/// and either appends items into an existing group (e.g., `CREATE`, `MODIFY`) or creates a
+/// dedicated subgroup within that tab.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct UiPlacementManifest {
+    /// Target built-in tab identifier (case-insensitive, e.g. `"MODEL"`, `"SKETCH"`, `"SURFACE"`, `"ASSEMBLE"`).
+    pub tab: String,
+    /// Target group/panel identifier within the tab (e.g. `"CREATE"`, `"MODIFY"`, or a custom subgroup id like `"gears"`).
+    pub group: String,
+    /// Optional human-readable heading when creating a custom subgroup inside a built-in tab.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_label: Option<String>,
+    /// One or more plugin entry buttons to place in the target group.
+    pub items: Vec<RibbonItemManifest>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -74,12 +96,35 @@ impl UiManifest {
         if self.ribbon_tabs.len() > MAX_RIBBON_TABS_PER_PLUGIN {
             return Err(invalid("ui.ribbon_tabs", "at most 4 ribbon tabs per plugin"));
         }
+        if self.placements.len() > MAX_PLACEMENTS_PER_PLUGIN {
+            return Err(invalid("ui.placements", "at most 16 built-in tab placements per plugin"));
+        }
         if self.panels.len() > MAX_PANELS_PER_PLUGIN {
             return Err(invalid("ui.panels", "at most 8 panels per plugin"));
         }
 
         let declared_entries: BTreeSet<&str> =
             runtime.entries.iter().map(|entry| entry.name.as_str()).collect();
+
+        for placement in &self.placements {
+            if !plain(&placement.tab, 40) {
+                return Err(invalid("ui.placements.tab", "requires 1..40 printable characters"));
+            }
+            if !plain(&placement.group, 40) {
+                return Err(invalid("ui.placements.group", "requires 1..40 printable characters"));
+            }
+            if let Some(gl) = &placement.group_label
+                && !plain(gl, 40)
+            {
+                return Err(invalid("ui.placements.group_label", "requires 1..40 printable characters"));
+            }
+            if placement.items.is_empty() || placement.items.len() > MAX_BUTTONS_PER_GROUP {
+                return Err(invalid("ui.placements.items", "requires 1..16 items per placement"));
+            }
+            for item in &placement.items {
+                validate_ribbon_item(item, &declared_entries, "ui.placements.items")?;
+            }
+        }
 
         let mut tab_ids = BTreeSet::new();
         for tab in &self.ribbon_tabs {
@@ -124,28 +169,7 @@ impl UiManifest {
                 }
 
                 for item in &group.items {
-                    if !declared_entries.contains(item.entry.as_str()) {
-                        return Err(invalid(
-                            "ui.ribbon_tabs.groups.items.entry",
-                            format!("references undeclared entry `{}`", item.entry),
-                        ));
-                    }
-                    if let Some(label) = &item.label
-                        && !plain(label, 48)
-                    {
-                        return Err(invalid(
-                            "ui.ribbon_tabs.groups.items.label",
-                            "requires 1..48 printable characters",
-                        ));
-                    }
-                    if let Some(icon) = &item.icon
-                        && !valid_id(icon)
-                    {
-                        return Err(invalid(
-                            "ui.ribbon_tabs.groups.items.icon",
-                            "icon id must be lowercase kebab-case",
-                        ));
-                    }
+                    validate_ribbon_item(item, &declared_entries, "ui.ribbon_tabs.groups.items")?;
                 }
             }
         }
@@ -168,4 +192,34 @@ impl UiManifest {
 
         Ok(())
     }
+}
+
+fn validate_ribbon_item(
+    item: &RibbonItemManifest,
+    declared_entries: &BTreeSet<&str>,
+    prefix: &str,
+) -> Result<()> {
+    if !declared_entries.contains(item.entry.as_str()) {
+        return Err(invalid(
+            format!("{prefix}.entry"),
+            format!("references undeclared entry `{}`", item.entry),
+        ));
+    }
+    if let Some(label) = &item.label
+        && !plain(label, 48)
+    {
+        return Err(invalid(
+            format!("{prefix}.label"),
+            "requires 1..48 printable characters",
+        ));
+    }
+    if let Some(icon) = &item.icon
+        && !valid_id(icon)
+    {
+        return Err(invalid(
+            format!("{prefix}.icon"),
+            "icon id must be lowercase kebab-case",
+        ));
+    }
+    Ok(())
 }

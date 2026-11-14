@@ -16,6 +16,18 @@ pub struct PluginRibbonGroup { pub id: String, pub label: String, pub items: Vec
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PluginRibbonItem { pub command_id: String, pub entry: String, pub label: String, pub icon: Option<String>, pub promoted: bool, pub effect: Effect, pub input_schema: Value }
 
+/// Projected UI placement targeting a built-in SolidCraft Ribbon tab (e.g. `MODEL`, `SKETCH`, `SURFACE`, `ASSEMBLE`)
+/// and either an existing group (`CREATE`, `MODIFY`) or a custom plugin subgroup within that tab.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginPlacement {
+    pub plugin_id: String,
+    pub plugin_name: String,
+    pub tab: String,
+    pub group: String,
+    pub group_label: String,
+    pub items: Vec<PluginRibbonItem>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PluginPanelInfo { pub key: String, pub plugin_id: String, pub plugin_name: String, pub panel_id: String, pub title: String, pub allowed_zones: Vec<DockZone>, pub default_visible: bool }
 
@@ -64,6 +76,21 @@ impl PluginRegistry {
         self.plugins.values().filter(|p| p.enabled).filter_map(|p| Some((&p.manifest, &p.manifest.runtime.as_ref()?.entries, p.manifest.ui.as_ref()?)))
             .flat_map(|(m, entries, ui)| ui.ribbon_tabs.iter().map(move |t| project_ribbon_tab(m, entries, t))).collect()
     }
+    /// Returns all active plugin placements targeting built-in Ribbon tabs and groups.
+    pub fn placements(&self) -> Vec<PluginPlacement> {
+        self.plugins.values().filter(|p| p.enabled).filter_map(|p| Some((&p.manifest, &p.manifest.runtime.as_ref()?.entries, p.manifest.ui.as_ref()?)))
+            .flat_map(|(m, entries, ui)| {
+                ui.placements.iter().map(move |pl| PluginPlacement {
+                    plugin_id: m.id.clone(),
+                    plugin_name: m.name.clone(),
+                    tab: pl.tab.to_ascii_uppercase(),
+                    group: pl.group.to_ascii_uppercase(),
+                    group_label: pl.group_label.clone().unwrap_or_else(|| pl.group.clone()),
+                    items: pl.items.iter().filter_map(|i| project_ribbon_item(m, entries, i)).collect(),
+                })
+            })
+            .collect()
+    }
     pub fn panels(&self) -> Vec<PluginPanelInfo> {
         self.plugins.values().filter(|p| p.enabled).filter_map(|p| Some((&p.manifest, p.manifest.ui.as_ref()?)))
             .flat_map(|(m, ui)| ui.panels.iter().map(move |panel| project_panel(m, panel))).collect()
@@ -92,7 +119,10 @@ impl Session {
     pub fn register_plugin_json(&mut self, bytes: &[u8], folder: &str, executor: Option<PluginExecutor>) -> Result<PluginSummary> { self.plugins.register_from_json(bytes, folder, executor) }
     pub fn unregister_plugin(&mut self, plugin_id: &str) -> bool { self.plugins.unregister(plugin_id) }
     pub fn set_plugin_enabled(&mut self, plugin_id: &str, enabled: bool) -> Result<()> { self.plugins.set_enabled(plugin_id, enabled) }
+    /// Returns standalone custom Ribbon tabs registered by enabled plugins.
     pub fn plugin_ribbon_tabs(&self) -> Vec<PluginRibbonTab> { self.plugins.ribbon_tabs() }
+    /// Returns plugin button groups injected into built-in Ribbon tabs (`MODEL`, `SKETCH`, `SURFACE`, `ASSEMBLE`, etc.).
+    pub fn plugin_placements(&self) -> Vec<PluginPlacement> { self.plugins.placements() }
     pub fn plugin_panels(&self) -> Vec<PluginPanelInfo> { self.plugins.panels() }
     pub fn list_plugins(&self) -> Vec<PluginSummary> { self.plugins.list() }
 
@@ -144,6 +174,13 @@ struct WasmCommandCall {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+/// Creates a sandboxed WebAssembly (`wasmi`) [`PluginExecutor`] for a plugin module.
+///
+/// # Security & Sandboxing
+/// - Executes pure compute modules without WASI, filesystem, or network imports.
+/// - Enforces a strict command allowlist (`allowed_commands`): any command emitted by the plugin
+///   that is not declared in `plugin.json` (`runtime.commands`) is rejected with [`EngineError::Disabled`].
+/// - Caps returned JSON output buffers at 1 MiB to prevent unbounded memory allocation.
 pub fn wasm_executor(wasm_bytes: Vec<u8>, allowed_commands: Vec<String>) -> Result<PluginExecutor> {
     let engine = wasmi::Engine::default();
     let module = wasmi::Module::new(&engine, &wasm_bytes)

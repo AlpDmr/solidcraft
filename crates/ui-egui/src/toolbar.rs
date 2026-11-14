@@ -1403,6 +1403,9 @@ fn ribbon_contents(app: &mut SolveApp, ui: &mut egui::Ui, shape: RibbonShape) ->
         let more_tip = solidcraft_ui_text::tr_label("More toolbar panels");
         let accent = crate::workspace::tab_accent(&t, &tab);
         let row = panels.row(accent, labels, reveal.as_ref().map(|r| ribbon::Reveal { id: r.id, preview: r.preview, strength: pulse }), more_tip);
+        // Render any plugin-contributed button groups targeting this built-in tab (e.g. MODEL, SKETCH, SURFACE, ASSEMBLE).
+        let builtin_body_rect = Rect::from_min_max(pos2(ribbon_left, top), r.max);
+        crate::plugin_ribbon::paint_builtin_tab_placements(app, ui, builtin_body_rect, &tab);
         let mut out = {
             let mut more_rows = |ui: &mut egui::Ui, group: usize| {
                 let Some((panel, cmds, shown)) = lists.get(group) else { return false };

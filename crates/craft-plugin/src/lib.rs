@@ -21,7 +21,7 @@ use serde_json::Value;
 
 pub use ui_manifest::{
     DockZone, PluginPanelManifest, RibbonGroupManifest, RibbonItemManifest, RibbonTabManifest,
-    UiManifest, MAX_BUTTONS_PER_GROUP, MAX_GROUPS_PER_TAB, MAX_PANELS_PER_PLUGIN,
+    UiManifest, UiPlacementManifest, MAX_BUTTONS_PER_GROUP, MAX_PLACEMENTS_PER_PLUGIN, MAX_GROUPS_PER_TAB, MAX_PANELS_PER_PLUGIN,
     MAX_RIBBON_TABS_PER_PLUGIN, UI_CAPABILITY,
 };
 

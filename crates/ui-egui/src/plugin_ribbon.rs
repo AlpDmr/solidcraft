@@ -123,6 +123,75 @@ pub fn paint_plugin_tab_body(app: &mut SolveApp, ui: &mut egui::Ui, area: Rect, 
     }
 }
 
+/// Renders plugin-contributed button groups inside a built-in Ribbon tab (such as `MODEL`, `SKETCH`,
+/// `SURFACE`, or `ASSEMBLE`) alongside the standard SolidCraft panels.
+///
+/// Plugins can target either an existing panel name (e.g. `CREATE`, `MODIFY`) or declare a custom
+/// subgroup label within that built-in tab.
+pub fn paint_builtin_tab_placements(app: &mut SolveApp, ui: &mut egui::Ui, area: Rect, builtin_tab: &str) {
+    let placements: Vec<_> = app
+        .session
+        .plugin_placements()
+        .into_iter()
+        .filter(|p| p.tab.eq_ignore_ascii_case(builtin_tab) && !p.items.is_empty())
+        .collect();
+    if placements.is_empty() {
+        return;
+    }
+
+    let t = Tokens::get();
+    // Place plugin groups near the right side of the built-in ribbon area without colliding with built-in panels.
+    let item_w = 64.0_f32;
+    let pad = 8.0_f32;
+    let total_w: f32 = placements
+        .iter()
+        .map(|pl| (pl.items.len().max(1) as f32 * item_w + pad * 2.0).max(80.0) + 6.0)
+        .sum();
+    let mut x = (area.right() - total_w - 8.0).max(area.left() + 8.0);
+    let group_top = area.top() + 4.0;
+    let group_h = (area.height() - 8.0).max(40.0);
+
+    for pl in &placements {
+        let count = pl.items.len().max(1) as f32;
+        let group_w = (count * item_w + pad * 2.0).max(80.0);
+        let grect = Rect::from_min_size(pos2(x, group_top), vec2(group_w, group_h));
+        ui.painter().rect_filled(grect, 4.0, t.panel);
+        ui.painter().rect_stroke(grect, 4.0, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+
+        let mut bx = grect.left() + pad;
+        for item in &pl.items {
+            let brect = Rect::from_min_size(pos2(bx, grect.top() + 4.0), vec2(item_w - 4.0, group_h - 22.0));
+            let resp = ui.interact(brect, Id::unique(("sc_plugin_builtin_btn", builtin_tab, &item.command_id)), Sense::click());
+            if resp.hovered() {
+                ui.painter().rect_filled(brect, 4.0, t.nav_hover);
+            }
+            let icon_rect = Rect::from_center_size(pos2(brect.center().x, brect.top() + 18.0), vec2(20.0, 20.0));
+            let icon_name = item.icon.as_deref().unwrap_or("plugin");
+            icons::paint_on(ui.painter(), icon_rect, icon_name, Some(true), 1.0);
+            ui.painter().text(
+                pos2(brect.center().x, brect.bottom() - 8.0),
+                Align2::CENTER_CENTER,
+                &item.label,
+                FontId::proportional(t.font_label),
+                t.text,
+            );
+            if resp.clicked() {
+                trigger_item(app, ui.ctx(), item);
+            }
+            bx += item_w;
+        }
+
+        ui.painter().text(
+            pos2(grect.center().x, grect.bottom() - 8.0),
+            Align2::CENTER_CENTER,
+            &pl.group_label,
+            FontId::proportional((t.font_label - 1.0).max(9.0)),
+            t.text_dim,
+        );
+        x += group_w + 6.0;
+    }
+}
+
 pub fn show_dialog(app: &mut SolveApp, ctx: &egui::Context) {
     let Some(mut modal) = ctx.data(|d| d.get_temp::<PendingPluginCall>(Id::unique("sc_plugin_modal"))) else {
         return;
@@ -177,6 +246,9 @@ pub fn show_dialog(app: &mut SolveApp, ctx: &egui::Context) {
 }
 
 /// Scans `{data}/plugins/<id>/plugin.json` on native targets and registers valid plugins into `app.session`.
+/// Scans `%LOCALAPPDATA%\SolidCraft\plugins\<plugin-id>\` for installed plugin packages,
+/// loads their compiled `.wasm` binary into a sandboxed `wasm_executor` constrained by
+/// `runtime.commands`, and registers them with the active engine session.
 pub fn sync_installed_plugins(app: &mut SolveApp) {
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(dir) = crate::plugins::plugins_dir() {
