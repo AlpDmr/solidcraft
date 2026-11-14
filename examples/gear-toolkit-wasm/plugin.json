@@ -23,6 +23,16 @@
     ]
   },
   "ui": {
+    "placements": [
+      {
+        "tab": "MODEL",
+        "group": "CREATE",
+        "group_label": "Gear Create",
+        "items": [
+          { "entry": "spur-gear", "label": "Spur Gear", "promoted": true }
+        ]
+      }
+    ],
     "ribbon_tabs": [
       {
         "id": "gears",
