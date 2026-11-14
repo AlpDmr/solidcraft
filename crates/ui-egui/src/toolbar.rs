@@ -792,8 +792,18 @@ const RENDER_JOBS: [&str; 2] = ["render.start", "render.cancel"];
 /// Returns `Some(already shown)` when a tab was clicked.
 fn ribbon_tabs(app: &mut SolveApp, ui: &mut egui::Ui, row: Rect) -> Option<bool> {
     let t = Tokens::get();
-    let ids = crate::workspace::visible_tabs(app);
-    let labels: Vec<String> = ids.iter().map(|tab| ribbon_label(app, tab)).collect();
+    let mut ids: Vec<String> = crate::workspace::visible_tabs(app).into_iter().map(String::from).collect();
+    let plugin_tabs = if crate::render_workspace::active(app) { Vec::new() } else { app.session.plugin_ribbon_tabs() };
+    for pt in &plugin_tabs {
+        ids.push(crate::plugin_ribbon::encode_plugin_tab(&pt.key));
+    }
+    let labels: Vec<String> = ids.iter().map(|tab| {
+        if let Some(key) = crate::plugin_ribbon::decode_plugin_tab(tab) {
+            plugin_tabs.iter().find(|pt| pt.key == key).map(|pt| crate::workspace::word_cased(&pt.label)).unwrap_or_else(|| key.to_string())
+        } else {
+            ribbon_label(app, tab)
+        }
+    }).collect();
     let render = crate::render_workspace::active(app);
     // The application bar may hold the search field instead ([`HeaderLayout`]): the tabs then
     // run to the row's end.
@@ -1320,6 +1330,11 @@ fn ribbon_contents(app: &mut SolveApp, ui: &mut egui::Ui, shape: RibbonShape) ->
         }
         // Panels.
         let tab = app.ui.tab.clone();
+        if let Some(plugin_key) = crate::plugin_ribbon::decode_plugin_tab(&tab) {
+            let body_rect = Rect::from_min_max(pos2(ribbon_left, r.top() + TAB_ROW_HEIGHT), r.max);
+            crate::plugin_ribbon::paint_plugin_tab_body(app, ui, body_rect, plugin_key);
+            return tab_click;
+        }
         // The command whose tool or dialog is open right now, shown pressed in the toolbar.
         let running = running_command(app);
         // The command the search points out (#7287): a preview while a result is hovered, or the

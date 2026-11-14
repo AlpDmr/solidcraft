@@ -335,6 +335,7 @@ mod timeline_scope;
 pub mod titlebar;
 pub mod tool_cursor;
 pub mod tool_modifiers;
+pub mod plugin_ribbon;
 pub mod toolbar;
 pub mod toolbar_custom;
 pub mod tools;
@@ -1063,6 +1064,7 @@ impl SolveApp {
             applied_system_fonts: false,
         };
         easyprint_ui::install(&mut app);
+        plugin_ribbon::sync_installed_plugins(&mut app);
         app
     }
 
@@ -3795,6 +3797,7 @@ impl SolveApp {
         view_confirm::show(self, ui.ctx());
         dialog_tree::show(self, ui.ctx());
         dialogs::show(self, ui.ctx());
+        plugin_ribbon::show_dialog(self, ui.ctx());
         issue_report::CadInput::block(self, ui, report_input);
         if !self.universal_panel_host_enabled() {
             sketch_palette::show(self, ui.ctx());
