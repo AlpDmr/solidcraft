@@ -809,6 +809,7 @@ pub fn starts_a_sketch(app: &crate::SolveApp, id: &str) -> bool {
 /// other tabs to remain usable for the rest of that context. Sketch takes precedence over sheet
 /// metal, and sheet metal over weldments.
 pub fn sync_context(app: &mut crate::SolveApp) {
+    if crate::plugin_ribbon::is_plugin_tab(&app.ui.tab) { return; }
     if crate::render_workspace::active(app) {
         return;
     }
