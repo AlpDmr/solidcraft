@@ -1,0 +1,42 @@
+{
+  "id": "gear-toolkit",
+  "name": "Gear Toolkit",
+  "version": "0.1.0",
+  "description": "Parametric spur gear generator",
+  "capabilities": ["commands@0.1", "ui@0.1"],
+  "runtime": {
+    "module": "gear-toolkit.wasm",
+    "commands": ["sketch.create", "sketch.line", "sketch.finish", "solid.extrude"],
+    "entries": [
+      {
+        "name": "spur-gear",
+        "label": "Spur Gear",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "teeth": { "type": "integer", "default": 24, "minimum": 6, "maximum": 120 },
+            "module_mm": { "type": "number", "default": 2.5, "minimum": 0.2 },
+            "helical": { "type": "boolean", "default": false }
+          }
+        }
+      }
+    ]
+  },
+  "ui": {
+    "ribbon_tabs": [
+      {
+        "id": "gears",
+        "label": "Gears",
+        "groups": [
+          {
+            "id": "generators",
+            "label": "Generators",
+            "items": [
+              { "entry": "spur-gear", "label": "Spur Gear", "promoted": true }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

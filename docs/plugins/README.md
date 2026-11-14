@@ -9,6 +9,7 @@ SolidCraft, üçüncü taraf araçların çekirdek motoru değiştirmeden özel 
 ## 2. Manifest (plugin.json) Kuralları
 craft-plugin ayrıştırıcısı katı alan doğrulaması (deny_unknown_fields) uygular:
 - Üst düzey alanlar: id, name, version, description, capabilities, runtime, ui
+- capabilities formatı: name@major.minor (ör. "commands@0.1", "ui@0.1")
 - runtime alanları: module, entries, commands, limits, permissions
 
 ## 3. Host ABI Sözleşmesi
