@@ -187,7 +187,14 @@ pub fn sync_installed_plugins(app: &mut SolveApp) {
                 let Some(folder) = path.file_name().and_then(|n| n.to_str()) else { continue; };
                 let manifest_path = path.join("plugin.json");
                 if let Ok(bytes) = std::fs::read(&manifest_path) {
-                    let _ = app.session.register_plugin_json(&bytes, folder, None);
+                    let executor = craft_plugin::parse_manifest(&bytes, folder)
+                        .ok()
+                        .and_then(|m| m.runtime)
+                        .and_then(|rt| {
+                            let wasm_bytes = std::fs::read(path.join(&rt.module)).ok()?;
+                            solidcraft_engine::plugins::wasm_executor(wasm_bytes, rt.commands).ok()
+                        });
+                    let _ = app.session.register_plugin_json(&bytes, folder, executor);
                 }
             }
         }
